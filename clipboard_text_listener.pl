@@ -1,34 +1,57 @@
 #!/usr/bin/perl
 
-package ClipboardTextListener::Client;
+use strict;
+use warnings;
+
+package ClipboardTextListener::Writer;
+use Encode qw(decode encode);
+use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
 {
     sub new {
-        return ClipboardTextListener::Client::Win32->new if $^O =~ /^(MSWin32|cygwin)$/;
-        return ClipboardTextListener::Client::Cmd->new({qw(/usr/bin/pbcopy '')}) if $^O =~ /^(darwin)$/;
-        return ClipboardTextListener::Client::Cmd->new({qw(/usr/bin/xsel ''), qw(/usr/bin/xclip '')}) if $^O =~ /^(linux)$/;
-        return ClipboardTextListener::Client::Stdout->new;
+        my ($class, $opts) = @_;
+        my $self = bless {
+            writer   => _create(),
+            encoding => $opts->{encoding},
+            verbose  => $opts->{verbose},
+        }, $class;
+        $self
     }
-    sub write { print "not implement yet!\n" }
-    sub read { print "not implement yet!\n" }
+    sub _create {
+        return ClipboardTextListener::Writer::Win32->new if $^O =~ /^(MSWin32|cygwin)$/;
+        return ClipboardTextListener::Writer::Cmd->new({qw(/usr/bin/pbcopy '')}) if $^O =~ /^(darwin)$/;
+        return ClipboardTextListener::Writer::Cmd->new({qw(/usr/bin/xsel ''), qw(/usr/bin/xclip '')}) if $^O =~ /^(linux)$/;
+        return ClipboardTextListener::Writer::Stdout->new;
+    }
+    sub write {
+        my ($self, $text_data) = @_;
+        return unless $text_data;
+        my $guess = guess_encoding($text_data);
+        my $encoding = ref $guess ? $guess->name : ($guess =~ /([\w-]+)$/o)[0];
+        if ($self->{verbose} ge 2) {
+            printf "(Encoding: %s -> %s)\n%s\n" , $encoding, $self->{encoding}, $text_data;
+        }
+        $text_data = encode($self->{encoding}, decode($encoding, $text_data));
+        $self->{writer}->_write($text_data);
+    }
 }
-package ClipboardTextListener::Client::Win32;
-use base qw(ClipboardTextListener::Client);
+
+package ClipboardTextListener::Writer::Win32;
 {
     require Win32::Clipboard if $^O =~ /^(MSWin32|cygwin)$/;
     sub new {
         my $class = shift;
         my $self = bless {
-            clipboard => Win32::Clipboard,
+            clipboard => Win32::Clipboard(),
         }, $class;
         $self
     }
-    sub write {
+    sub _write {
         my ($self, $textdata) = @_;
         $self->{clipboard}->Set($textdata);
     }
 }
-package ClipboardTextListener::Client::Cmd;
-use base qw(ClipboardTextListener::Client);
+
+package ClipboardTextListener::Writer::Cmd;
 {
     sub new {
         my ($class, $cmdref) = @_;
@@ -49,34 +72,29 @@ use base qw(ClipboardTextListener::Client);
         }, $class;
         $self
     }
-    sub write {
+    sub _write {
         my ($self, $textdata) = @_;
         open COPYCMD, "| $self->{cmd} $self->{opts}";
         print COPYCMD $textdata;
         close COPYCMD;
     }
 }
-package ClipboardTextListener::Client::Stdout;
-use base qw(ClipboardTextListener::Client);
+
+package ClipboardTextListener::Writer::Stdout;
 {
     sub new {
         my $class = shift;
         return bless {}, $class;
     }
-    sub write {
+    sub _write {
         my ($self, $textdata) = @_;
         print "$textdata\n";
     }
 }
-package ClipboardTextListener;
-{
-    use strict;
-    use utf8;
-    use warnings;
 
-    use Encode qw(decode encode);
-    use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
-    use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
+package ClipboardTextListener;
+use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
+{
 
     sub new {
         my $class = shift;
@@ -87,7 +105,6 @@ package ClipboardTextListener;
             output_encoding => $args{-encoding} ||= 'shiftjis',
             verbose         => $args{-verbose}  ||= 0,
             accept_key      => $args{-key}      ||= 'change_on_install',
-            client          => ClipboardTextListener::Client->new,
             _args           => @_ ? join(' ', @_) : '',
         };
         return bless $self, $class;
@@ -108,6 +125,11 @@ package ClipboardTextListener;
                              , $self->{listen_addr}, $self->{listen_port}
                              , $self->{_args} ? "($self->{_args})" : "");
 
+        my $writer = ClipboardTextListener::Writer->new({
+            encoding => $self->{output_encoding},
+            verbose  => $self->{verbose},
+        });
+
         my ($sock, $accepted, @data);
         while ($sock = $listen_sock->accept) {
             select $sock; $|=1; select STDOUT;
@@ -123,25 +145,16 @@ package ClipboardTextListener;
             }
             my $text_data = join '', @data;
             if ($self->{verbose}) {
-                my ($client_port, $client_iaddr) = unpack_sockaddr_in($sock->peername);
-                my $client_ip = inet_ntoa($client_iaddr);
-                my $message = sprintf '(%s:%s) ', $client_ip, $client_port;
-                if ($accepted) {
-                    $message .= '*** RECIEVE TEXT *** ' . length($text_data);
-                    $message .= "\n$text_data" if $self->{verbose} ge 2;
-                }
-                else {
-                    $message .= '*** NOT ACCEPTED ***';
-                }
-                $self->_stdout($message);
+                my ($src_port, $src_iaddr) = unpack_sockaddr_in($sock->peername);
+                $self->_stdout(
+                    sprintf '(%s:%s) %s'
+                          , inet_ntoa($src_iaddr), $src_port
+                          , $accepted ? '*** RECIEVE TEXT *** ' . length($text_data)
+                                      : '*** NOT ACCEPTED ***'
+                );
             }
             close $sock;
-            if (@data) {
-                my $guess = guess_encoding($text_data);
-                my $encoding = ref $guess ? $guess->name : ($guess =~ /([\w-]+)$/o)[0];
-                $text_data = encode($self->{output_encoding}, decode($encoding, $text_data));
-                $self->{client}->write($text_data);
-            }
+            $writer->write($text_data);
         }
         close $listen_sock;
     }
