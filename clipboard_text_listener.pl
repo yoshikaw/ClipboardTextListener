@@ -88,6 +88,7 @@ package ClipboardTextListener;
             verbose         => $args{-verbose}  ||= 0,
             accept_key      => $args{-key}      ||= 'change_on_install',
             client          => ClipboardTextListener::Client->new,
+            _args           => @_ ? join(' ', @_) : '',
         };
         return bless $self, $class;
     }
@@ -103,8 +104,9 @@ package ClipboardTextListener;
         );
         die "IO::Socket : $!" unless $listen_sock;
 
-        print "$0 @ARGV\n";
-        print "[$$] listening $self->{listen_addr}:$self->{listen_port} \n";
+        $self->_stdout(sprintf "listening %s:%d %s"
+                             , $self->{listen_addr}, $self->{listen_port}
+                             , $self->{_args} ? "($self->{_args})" : "");
 
         my ($sock, $accepted, @data);
         while ($sock = $listen_sock->accept) {
@@ -119,23 +121,22 @@ package ClipboardTextListener;
                     $accepted = 1;
                 }
             }
+            my $text_data = join '', @data;
             if ($self->{verbose}) {
                 my ($client_port, $client_iaddr) = unpack_sockaddr_in($sock->peername);
                 my $client_ip = inet_ntoa($client_iaddr);
-                my @dt = (localtime)[0..5]; $dt[5] += 1900; $dt[4] += 1;
-                printf '%04d/%02d/%02d %02d:%02d:%02d ', reverse @dt;
-                printf '[%s:%s] ', $client_ip, $client_port;
+                my $message = sprintf '(%s:%s) ', $client_ip, $client_port;
                 if ($accepted) {
-                    print @data if $self->{verbose} ge 2;
+                    $message .= '*** RECIEVE TEXT *** ' . length($text_data);
+                    $message .= "\n$text_data" if $self->{verbose} ge 2;
                 }
                 else {
-                    print '*** NOT ACCEPTED ***';
+                    $message .= '*** NOT ACCEPTED ***';
                 }
-                print "\n";
+                $self->_stdout($message);
             }
             close $sock;
             if (@data) {
-                my $text_data = join '', @data;
                 my $guess = guess_encoding($text_data);
                 my $encoding = ref $guess ? $guess->name : ($guess =~ /([\w-]+)$/o)[0];
                 $text_data = encode($self->{output_encoding}, decode($encoding, $text_data));
@@ -143,6 +144,16 @@ package ClipboardTextListener;
             }
         }
         close $listen_sock;
+    }
+
+    sub _stdout {
+        my ($self, $message) = @_;
+        if ($self->{verbose}) {
+            my @dt = (localtime)[0..5]; $dt[5] += 1900; $dt[4] += 1;
+            printf '%04d/%02d/%02d %02d:%02d:%02d ', reverse @dt;
+        }
+        printf '%s[%d]: %s', __PACKAGE__, $$, $message;
+        print "\n";
     }
 }
 
