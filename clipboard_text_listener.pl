@@ -16,12 +16,6 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
         }, $class;
         $self
     }
-    sub _create {
-        return ClipboardTextListener::Writer::Win32->new if $^O =~ /^(MSWin32|cygwin)$/;
-        return ClipboardTextListener::Writer::Cmd->new({qw(/usr/bin/pbcopy '')}) if $^O =~ /^(darwin)$/;
-        return ClipboardTextListener::Writer::Cmd->new({qw(/usr/bin/xsel ''), qw(/usr/bin/xclip '')}) if $^O =~ /^(linux)$/;
-        return ClipboardTextListener::Writer::Stdout->new;
-    }
     sub write {
         my ($self, $text_data) = @_;
         return unless $text_data;
@@ -32,6 +26,12 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
         }
         $text_data = encode($self->{encoding}, decode($encoding, $text_data));
         $self->{writer}->_write($text_data);
+    }
+    sub _create {
+        return ClipboardTextListener::Writer::Win32->new if $^O =~ /^(MSWin32|cygwin)$/;
+        return ClipboardTextListener::Writer::Cmd->new({qw(/usr/bin/pbcopy '')}) if $^O =~ /^(darwin)$/;
+        return ClipboardTextListener::Writer::Cmd->new({qw(/usr/bin/xsel ''), qw(/usr/bin/xclip '')}) if $^O =~ /^(linux)$/;
+        return ClipboardTextListener::Writer::Stdout->new;
     }
 }
 
@@ -95,7 +95,6 @@ package ClipboardTextListener::Writer::Stdout;
 package ClipboardTextListener;
 use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
 {
-
     sub new {
         my $class = shift;
         my %args = @_;
@@ -109,7 +108,6 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
         };
         return bless $self, $class;
     }
-
     sub run {
         my $self = shift;
         my $listen_sock = new IO::Socket::INET(
@@ -158,7 +156,6 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
         }
         close $listen_sock;
     }
-
     sub _stdout {
         my ($self, $message) = @_;
         if ($self->{verbose}) {
