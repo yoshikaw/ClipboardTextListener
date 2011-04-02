@@ -7,18 +7,19 @@ package ClipboardTextListener::Writer;
 use Encode qw(decode encode);
 use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
 {
+    # defines available command line to copy stdin to the clipboard
     my %command = (
-        # defines available command to copy stdin to the clipboard
-        # osname      command-path              options
-        darwin   => { '/usr/bin/pbcopy'      => '',
-        },
-        linux    => { '/usr/bin/xsel'        => '',
-                      '/usr/bin/xclip'       => '',
-        },
-        cygwin   => { '/usr/bin/putclip'     => '',
-        },
-        MSWin32  => { ($ENV{WINDIR}||='').'\\system32\\clip.exe' => '',
-        },
+        # osname      command line
+        darwin   => [ '/usr/bin/pbcopy',
+        ],
+        linux    => [ '/usr/bin/xsel',
+                      '/usr/bin/xclip',
+        ],
+        cygwin   => [ '/usr/bin/putclip',
+        ],
+        MSWin32  => [ ($ENV{WINDIR}||='').'\\system32\\clip.exe',
+                      ($ENV{CYGWIN_HOME}||='').'\\usr\\bin\\putclip.exe',
+        ],
     );
     sub new {
         my ($class, $opts) = @_;
@@ -33,7 +34,9 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
         my ($self, $text) = @_;
         return unless $text;
         my $guess = guess_encoding($text);
-        my $text_encoding = ref $guess ? $guess->name : ($guess =~ /([\w-]+)$/o)[0];
+        my $text_encoding = ref $guess
+            ? $guess->name
+            : ($guess =~ /([\w-]+)$/o)[0]; # accept first suspects
         if ($self->{verbose} ge 2) {
             printf "(Encoding: %s -> %s)\n" , $text_encoding, $self->{encoding};
             printf "%s\n", $text
@@ -82,26 +85,26 @@ package ClipboardTextListener::Writer::Cmd;
 {
     sub new {
         my ($class, $cmdref) = @_;
-        my (@cmd, @tried_cmd) = ();
-        while (my ($cmd, $opts) = each %$cmdref) {
+        my (@tried_cmd, $cmd, $available) = ();
+        for my $cmdline (@$cmdref) {
+            # check the first field at command line
+            # whether or not to be available
+            $cmd = (split /\s+/, $cmdline)[0];
             if (-x $cmd) {
-                @cmd = ($cmd, $opts);
+                $available = $cmdline;
                 last;
             }
-            else {
-                push @tried_cmd, $cmd;
-            }
+            push @tried_cmd, $cmd;
         }
-        @cmd or die sprintf "Can\'t execute copy command(%s).", join(', ', @tried_cmd);
+        $available or die sprintf "Can\'t execute copy command(%s).", join(', ', @tried_cmd);
         my $self = bless {
-            cmd  => $cmd[0],
-            opts => $cmd[1],
+            cmdline => $available,
         }, $class;
         $self
     }
     sub _write {
         my ($self, $text) = @_;
-        open COPYCMD, "| $self->{cmd} $self->{opts}";
+        open COPYCMD, "| $self->{cmdline}";
         print COPYCMD $text;
         close COPYCMD;
     }
@@ -142,11 +145,11 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
             verbose  => $self->{verbose},
         });
         my $listen_sock = new IO::Socket::INET(
-            Listen    => 5,
             LocalAddr => $self->{listen_addr},
             LocalPort => $self->{listen_port},
             Proto     => 'tcp',
-            Reuse     => 1,
+            Listen    => 1,
+            ReuseAddr => 1,
         );
         die "IO::Socket : $!" unless $listen_sock;
 
