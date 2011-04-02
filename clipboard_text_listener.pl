@@ -10,16 +10,11 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
     # defines available command line to copy stdin to the clipboard
     my %command = (
         # osname      command line
-        darwin   => [ '/usr/bin/pbcopy',
-        ],
-        linux    => [ '/usr/bin/xsel',
-                      '/usr/bin/xclip',
-        ],
-        cygwin   => [ '/usr/bin/putclip',
-        ],
+        darwin   => [ '/usr/bin/pbcopy', ],
+        linux    => [ '/usr/bin/xsel', '/usr/bin/xclip', ],
+        cygwin   => [ '/usr/bin/putclip', ],
         MSWin32  => [ ($ENV{WINDIR}||='').'\\system32\\clip.exe',
-                      ($ENV{CYGWIN_HOME}||='').'\\usr\\bin\\putclip.exe',
-        ],
+                      ($ENV{CYGWIN_HOME}||='').'\\usr\\bin\\putclip.exe', ],
     );
     sub new {
         my ($class, $opts) = @_;
@@ -57,9 +52,7 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
                 # tries to use command
                 return ClipboardTextListener::Writer::Cmd->new($command{$1});
             }
-            else {
-                return ClipboardTextListener::Writer::Win32->new;
-            }
+            return ClipboardTextListener::Writer::Win32->new;
         }
         print "Platform: $^O is not supported yet. echo received text only.\n";
         return ClipboardTextListener::Writer::Stdout->new;
@@ -87,8 +80,7 @@ package ClipboardTextListener::Writer::Cmd;
         my ($class, $cmdref) = @_;
         my (@tried_cmd, $cmd, $available) = ();
         for my $cmdline (@$cmdref) {
-            # check the first field at command line
-            # whether or not to be available
+            # check the first field at command line whether or not to be available
             $cmd = (split /\s+/, $cmdline)[0];
             if (-x $cmd) {
                 $available = $cmdline;
@@ -96,7 +88,7 @@ package ClipboardTextListener::Writer::Cmd;
             }
             push @tried_cmd, $cmd;
         }
-        $available or die sprintf "Can\'t execute copy command(%s).", join(', ', @tried_cmd);
+        $available or die sprintf "command not found(%s).", join(', ', @tried_cmd);
         my $self = bless {
             cmdline => $available,
         }, $class;
@@ -177,7 +169,7 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
                 $self->_stdout(
                     sprintf '(%s:%s) %s'
                           , inet_ntoa($src_iaddr), $src_port
-                          , $accepted ? '*** RECIEVE TEXT *** ' . length($text)
+                          , $accepted ? '*** RECEIVE TEXT *** ' . length($text) # roughly
                                       : '*** NOT ACCEPTED ***'
                 );
             }
