@@ -150,7 +150,7 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
                              , $self->{_args} ? "($self->{_args})" : ""
         );
 
-        my ($sock, $accepted, @data);
+        my ($sock, $accepted, @data, %header);
         while ($sock = $listen_sock->accept) {
             select $sock; $|=1; select STDOUT;
             @data = (); $accepted = 0;
@@ -159,7 +159,10 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
                     push @data, $_;
                 }
                 else {
-                    last unless /^\Q$self->{accept_key}\E$/o;
+                    my @header = split /\t/;
+                    my $received_key = shift @header;
+                    last unless $received_key =~ /^\Q$self->{accept_key}\E$/o;
+                    %header = map { split /=/ } @header;
                     $accepted = 1;
                 }
             }
