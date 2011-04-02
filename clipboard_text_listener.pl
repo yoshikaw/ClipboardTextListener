@@ -30,17 +30,17 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
         $self
     }
     sub write {
-        my ($self, $text_data) = @_;
-        return unless $text_data;
-        my $guess = guess_encoding($text_data);
+        my ($self, $text) = @_;
+        return unless $text;
+        my $guess = guess_encoding($text);
         my $text_encoding = ref $guess ? $guess->name : ($guess =~ /([\w-]+)$/o)[0];
         if ($self->{verbose} ge 2) {
             printf "(Encoding: %s -> %s)\n" , $text_encoding, $self->{encoding};
-            printf "%s\n", $text_data
+            printf "%s\n", $text
                 if ref $self->{writer} ne 'ClipboardTextListener::Writer::Stdout';
         }
-        $text_data = encode($self->{encoding}, decode($text_encoding, $text_data));
-        $self->{writer}->_write($text_data);
+        $text = encode($self->{encoding}, decode($text_encoding, $text));
+        $self->{writer}->_write($text);
     }
     sub _create {
         if ($^O =~ /^(darwin|linux)$/) {
@@ -73,8 +73,8 @@ package ClipboardTextListener::Writer::Win32;
         $self
     }
     sub _write {
-        my ($self, $textdata) = @_;
-        $self->{clipboard}->Set($textdata);
+        my ($self, $text) = @_;
+        $self->{clipboard}->Set($text);
     }
 }
 
@@ -100,9 +100,9 @@ package ClipboardTextListener::Writer::Cmd;
         $self
     }
     sub _write {
-        my ($self, $textdata) = @_;
+        my ($self, $text) = @_;
         open COPYCMD, "| $self->{cmd} $self->{opts}";
-        print COPYCMD $textdata;
+        print COPYCMD $text;
         close COPYCMD;
     }
 }
@@ -114,8 +114,8 @@ package ClipboardTextListener::Writer::Stdout;
         return bless {}, $class;
     }
     sub _write {
-        my ($self, $textdata) = @_;
-        print "$textdata\n";
+        my ($self, $text) = @_;
+        print "$text\n";
     }
 }
 
@@ -137,12 +137,10 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
     }
     sub run {
         my $self = shift;
-
         my $writer = ClipboardTextListener::Writer->new({
             encoding => $self->{encoding},
             verbose  => $self->{verbose},
         });
-
         my $listen_sock = new IO::Socket::INET(
             Listen    => 5,
             LocalAddr => $self->{listen_addr},
@@ -170,18 +168,18 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
                     $accepted = 1;
                 }
             }
-            my $text_data = join '', @data;
+            my $text = join '', @data;
             if ($self->{verbose}) {
                 my ($src_port, $src_iaddr) = unpack_sockaddr_in($sock->peername);
                 $self->_stdout(
                     sprintf '(%s:%s) %s'
                           , inet_ntoa($src_iaddr), $src_port
-                          , $accepted ? '*** RECIEVE TEXT *** ' . length($text_data)
+                          , $accepted ? '*** RECIEVE TEXT *** ' . length($text)
                                       : '*** NOT ACCEPTED ***'
                 );
             }
             close $sock;
-            $writer->write($text_data);
+            $writer->write($text);
         }
         close $listen_sock;
     }
