@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-package ClipboardTextListener::Writer;
+package Writer;
 use Encode qw(decode encode);
 use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
 {
@@ -35,14 +35,14 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
         if ($self->{verbose} ge 2) {
             printf "(Encoding: %s -> %s)\n" , $text_encoding, $self->{encoding};
             printf "%s\n", $text
-                if ref $self->{writer} ne 'ClipboardTextListener::Writer::Stdout';
+                if ref $self->{writer} ne 'Writer::Writer::Stdout';
         }
         $text = encode($self->{encoding}, decode($text_encoding, $text));
         $self->{writer}->_write($text);
     }
     sub _create {
         if ($^O =~ /^(darwin|linux)$/) {
-            return ClipboardTextListener::Writer::Cmd->new($command{$1});
+            return Writer::Clipboard::Cmd->new($command{$1});
         }
         if ($^O =~ /^(MSWin32|cygwin)$/) {
             eval {
@@ -50,16 +50,16 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
             };
             if ($@) {
                 # tries to use command
-                return ClipboardTextListener::Writer::Cmd->new($command{$1});
+                return Writer::Clipboard::Cmd->new($command{$1});
             }
-            return ClipboardTextListener::Writer::Win32->new;
+            return Writer::Clipboard::Win32->new;
         }
         print "Platform: $^O is not supported yet. echo received text only.\n";
-        return ClipboardTextListener::Writer::Stdout->new;
+        return Writer::Stdout->new;
     }
 }
 
-package ClipboardTextListener::Writer::Win32;
+package Writer::Clipboard::Win32;
 {
     sub new {
         my $class = shift;
@@ -74,7 +74,7 @@ package ClipboardTextListener::Writer::Win32;
     }
 }
 
-package ClipboardTextListener::Writer::Cmd;
+package Writer::Clipboard::Cmd;
 {
     sub new {
         my ($class, $cmdref) = @_;
@@ -102,7 +102,7 @@ package ClipboardTextListener::Writer::Cmd;
     }
 }
 
-package ClipboardTextListener::Writer::Stdout;
+package Writer::Stdout;
 {
     sub new {
         my $class = shift;
@@ -114,7 +114,7 @@ package ClipboardTextListener::Writer::Stdout;
     }
 }
 
-package ClipboardTextListener;
+package TextListener;
 use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
 {
     sub new {
@@ -132,7 +132,7 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
     }
     sub run {
         my $self = shift;
-        my $writer = ClipboardTextListener::Writer->new({
+        my $writer = Writer->new({
             encoding => $self->{encoding},
             verbose  => $self->{verbose},
         });
@@ -193,7 +193,7 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
 }
 
 if (__FILE__ eq $0) {
-    ClipboardTextListener->new(@ARGV)->run;
+    TextListener->new(@ARGV)->run;
 }
 
 1;
