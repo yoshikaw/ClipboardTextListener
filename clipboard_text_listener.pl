@@ -48,7 +48,10 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
     }
     sub _create_writer {
         my ($self, $type) = @_;
-        if ($^O =~ /^(darwin|linux)$/) {
+        if ($^O =~ /^(darwin)$/) {
+            return Writer::Clipboard::Cmd::Mac->new($command{$1});
+        }
+        if ($^O =~ /^(linux)$/) {
             return Writer::Clipboard::Cmd->new($command{$1});
         }
         if ($^O =~ /^(MSWin32|cygwin)$/) {
@@ -106,6 +109,40 @@ package Writer::Clipboard::Cmd;
         open COPYCMD, "| $self->{cmdline}";
         print COPYCMD $text;
         close COPYCMD;
+    }
+}
+
+package Writer::Clipboard::Cmd::Mac;
+use base qw(Writer::Clipboard::Cmd);
+{
+    my $growl_ready = 0;
+    my %growl = (
+        cmd     => '',
+        title   => __PACKAGE__,
+        appicon => '',
+        icon    => '',
+        message_length => 40,
+    );
+    sub new {
+        my $class = shift;
+        for (`which growlnotify`) {
+            chomp;
+            if (-x) {
+                $growl{cmd} = $_;
+                $growl_ready = 1;
+                last;
+            }
+        }
+        SUPER::new $class (@_);
+    }
+    sub _write {
+        my ($self, $text) = @_;
+        $self->SUPER::_write($text);
+        if ($growl_ready) {
+            open my $growl, "| $growl{cmd} -t $growl{title}";
+            print $growl substr($text, 0, $growl{message_length});
+            close $growl;
+        }
     }
 }
 
