@@ -36,7 +36,7 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
         if ($self->{verbose} ge 2) {
             printf "[%s] encoding: %s -> %s\n"
                 , ref $writer, $text_encoding, $self->{encoding};
-            printf "$text\n" if ref $writer ne 'Writer::Stdout';
+            print "$text\n" if ref $writer ne 'Writer::Stdout';
         }
         $text = encode($self->{encoding}, decode($text_encoding, $text));
         $writer->_write($text);
@@ -116,12 +116,12 @@ package Writer::Clipboard::Cmd::Mac;
 use base qw(Writer::Clipboard::Cmd);
 {
     my $growl_ready = 0;
+    my $notify_message_length = 40;
     my %growl = (
         cmd     => '',
         title   => __PACKAGE__,
         appicon => '',
         icon    => '',
-        message_length => 40,
     );
     sub new {
         my $class = shift;
@@ -140,7 +140,7 @@ use base qw(Writer::Clipboard::Cmd);
         $self->SUPER::_write($text);
         if ($growl_ready) {
             open my $growl, "| $growl{cmd} -t $growl{title}";
-            print $growl substr($text, 0, $growl{message_length});
+            print $growl substr($text, 0, $notify_message_length);
             close $growl;
         }
     }
