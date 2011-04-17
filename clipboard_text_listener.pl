@@ -19,28 +19,35 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
     sub new {
         my ($class, $opts) = @_;
         my $self = bless {
-            writer   => _create(),
+            writer   => {},
             encoding => $opts->{encoding},
             verbose  => $opts->{verbose},
         }, $class;
         $self
     }
     sub write {
-        my ($self, $text) = @_;
+        my ($self, $text, $header) = @_;
         return unless $text;
+        my $writer = $self->_get_writer($header->{type});
         my $guess = guess_encoding($text);
         my $text_encoding = ref $guess
             ? $guess->name
             : ($guess =~ /([\w-]+)$/o)[0]; # accept first suspects
         if ($self->{verbose} ge 2) {
-            printf "(Encoding: %s -> %s)\n" , $text_encoding, $self->{encoding};
-            printf "%s\n", $text
-                if ref $self->{writer} ne 'Writer::Writer::Stdout';
+            printf "[%s] encoding: %s -> %s\n"
+                , ref $writer, $text_encoding, $self->{encoding};
+            printf "$text\n" if ref $writer ne 'Writer::Stdout';
         }
         $text = encode($self->{encoding}, decode($text_encoding, $text));
-        $self->{writer}->_write($text);
+        $writer->_write($text);
     }
-    sub _create {
+    sub _get_writer {
+        my ($self, $type) = @_;
+        $type = 'clipboard' unless $type;
+        $self->{writer}->{$type} ||= $self->_create_writer($type);
+    }
+    sub _create_writer {
+        my ($self, $type) = @_;
         if ($^O =~ /^(darwin|linux)$/) {
             return Writer::Clipboard::Cmd->new($command{$1});
         }
@@ -177,7 +184,7 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
                 );
             }
             close $sock;
-            $writer->write($text);
+            $writer->write($text, \%header);
         }
         close $listen_sock;
     }
