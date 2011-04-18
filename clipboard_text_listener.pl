@@ -3,9 +3,7 @@
 use strict;
 use warnings;
 
-package Writer;
-use Encode qw(decode encode);
-use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
+package WriterFactory;
 {
     # defines available command line to copy stdin to the clipboard
     my %command = (
@@ -16,6 +14,33 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
         MSWin32  => [ ($ENV{WINDIR}||='').'\\system32\\clip.exe',
                       ($ENV{CYGWIN_HOME}||='').'\\usr\\bin\\putclip.exe', ],
     );
+    sub create {
+        my ($self, $type) = @_;
+        if ($^O =~ /^(darwin)$/) {
+            return Writer::Clipboard::Cmd::Mac->new($command{$1});
+        }
+        if ($^O =~ /^(linux)$/) {
+            return Writer::Clipboard::Cmd->new($command{$1});
+        }
+        if ($^O =~ /^(MSWin32|cygwin)$/) {
+            eval {
+                require Win32::Clipboard;
+            };
+            if ($@) {
+                # tries to use command
+                return Writer::Clipboard::Cmd->new($command{$1});
+            }
+            return Writer::Clipboard::Win32->new;
+        }
+        print "Platform: $^O is not supported yet. echo received text only.\n";
+        return Writer::Stdout->new;
+    }
+}
+
+package Writer;
+use Encode qw(decode encode);
+use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
+{
     sub new {
         my ($class, $opts) = @_;
         my $self = bless {
@@ -39,33 +64,12 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
             print "$text\n" if ref $writer ne 'Writer::Stdout';
         }
         $text = encode($self->{encoding}, decode($text_encoding, $text));
-        $writer->_write($text);
+        $writer->write($text);
     }
     sub _get_writer {
         my ($self, $type) = @_;
         $type = 'clipboard' unless $type;
-        $self->{writer}->{$type} ||= $self->_create_writer($type);
-    }
-    sub _create_writer {
-        my ($self, $type) = @_;
-        if ($^O =~ /^(darwin)$/) {
-            return Writer::Clipboard::Cmd::Mac->new($command{$1});
-        }
-        if ($^O =~ /^(linux)$/) {
-            return Writer::Clipboard::Cmd->new($command{$1});
-        }
-        if ($^O =~ /^(MSWin32|cygwin)$/) {
-            eval {
-                require Win32::Clipboard;
-            };
-            if ($@) {
-                # tries to use command
-                return Writer::Clipboard::Cmd->new($command{$1});
-            }
-            return Writer::Clipboard::Win32->new;
-        }
-        print "Platform: $^O is not supported yet. echo received text only.\n";
-        return Writer::Stdout->new;
+        $self->{writer}->{$type} ||= WriterFactory->create($type);
     }
 }
 
@@ -88,7 +92,7 @@ package Writer::Clipboard::Win32;
         }, $class;
         $self
     }
-    sub _write {
+    sub write {
         my ($self, $text) = @_;
         $self->{clipboard}->Set($text);
         if ($notify_ready) {
@@ -123,7 +127,7 @@ package Writer::Clipboard::Cmd;
         }, $class;
         $self
     }
-    sub _write {
+    sub write {
         my ($self, $text) = @_;
         open COPYCMD, "| $self->{cmdline}";
         print COPYCMD $text;
@@ -153,9 +157,9 @@ use base qw(Writer::Clipboard::Cmd);
         }
         SUPER::new $class (@_);
     }
-    sub _write {
+    sub write {
         my ($self, $text) = @_;
-        $self->SUPER::_write($text);
+        $self->SUPER::write($text);
         if ($notify_ready) {
             open my $cmd, sprintf '| %s -a %s -t "(%s) %s"'
                 , $notify{cmd}, $notify{appicon}
@@ -172,7 +176,7 @@ package Writer::Stdout;
         my $class = shift;
         return bless {}, $class;
     }
-    sub _write {
+    sub write {
         my ($self, $text) = @_;
         print "$text\n";
     }
