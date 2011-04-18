@@ -139,7 +139,8 @@ use base qw(Writer::Clipboard::Cmd);
         my ($self, $text) = @_;
         $self->SUPER::_write($text);
         if ($growl_ready) {
-            open my $growl, "| $growl{cmd} -t $growl{title}";
+            open my $growl, sprintf '| %s -t "(%s) %s"'
+                , $growl{cmd}, length($text), $growl{title};
             print $growl substr($text, 0, $notify_message_length);
             close $growl;
         }
