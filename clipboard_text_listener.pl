@@ -71,8 +71,18 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
 
 package Writer::Clipboard::Win32;
 {
+    my $notify_ready = 0;
+    my $notify_message_length = 40;
+    my %notify = (
+        title   => __PACKAGE__,
+        icon    => 'none', # none info warning error
+    );
     sub new {
         my $class = shift;
+        eval {
+            require Win32::GUI;
+            $notify_ready = 1;
+        };
         my $self = bless {
             clipboard => Win32::Clipboard(),
         }, $class;
@@ -81,6 +91,15 @@ package Writer::Clipboard::Win32;
     sub _write {
         my ($self, $text) = @_;
         $self->{clipboard}->Set($text);
+        if ($notify_ready) {
+            my $ni = Win32::GUI::Window->new->AddNotifyIcon(
+                -balloon       => 1,
+                -balloon_icon  => $notify{icon},
+                -balloon_title => sprintf('(%s) %s', length($text), $notify{title}),
+                -balloon_tip   => substr($text, 0, $notify_message_length),
+            );
+            sleep 1;
+        }
     }
 }
 
@@ -115,21 +134,20 @@ package Writer::Clipboard::Cmd;
 package Writer::Clipboard::Cmd::Mac;
 use base qw(Writer::Clipboard::Cmd);
 {
-    my $growl_ready = 0;
+    my $notify_ready = 0;
     my $notify_message_length = 40;
-    my %growl = (
+    my %notify = (
         cmd     => '',
         title   => __PACKAGE__,
         appicon => '',
-        icon    => '',
     );
     sub new {
         my $class = shift;
         for (`which growlnotify`) {
             chomp;
             if (-x) {
-                $growl{cmd} = $_;
-                $growl_ready = 1;
+                $notify{cmd} = $_;
+                $notify_ready = 1;
                 last;
             }
         }
@@ -138,11 +156,12 @@ use base qw(Writer::Clipboard::Cmd);
     sub _write {
         my ($self, $text) = @_;
         $self->SUPER::_write($text);
-        if ($growl_ready) {
-            open my $growl, sprintf '| %s -t "(%s) %s"'
-                , $growl{cmd}, length($text), $growl{title};
-            print $growl substr($text, 0, $notify_message_length);
-            close $growl;
+        if ($notify_ready) {
+            open my $cmd, sprintf '| %s -a %s -t "(%s) %s"'
+                , $notify{cmd}, $notify{appicon}
+                , length($text), $notify{title};
+            print $cmd substr($text, 0, $notify_message_length);
+            close $cmd;
         }
     }
 }
