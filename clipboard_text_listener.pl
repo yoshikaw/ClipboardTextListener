@@ -16,28 +16,174 @@ package WriterFactory;
     );
     sub create {
         my ($self, $type) = @_;
-        if ($^O =~ /^(darwin)$/) {
-            return Writer::Clipboard::Cmd::Mac->new($command{$1});
-        }
-        if ($^O =~ /^(linux)$/) {
-            return Writer::Clipboard::Cmd->new($command{$1});
-        }
-        if ($^O =~ /^(MSWin32|cygwin)$/) {
-            eval {
-                require Win32::Clipboard;
-            };
-            if ($@) {
-                # tries to use command
-                return Writer::Clipboard::Cmd->new($command{$1});
+        my $notifier = _createNotifier();
+        if ($type eq 'clipboard') {
+            if ($^O =~ /^(MSWin32|cygwin)$/) {
+                eval { require Win32::Clipboard; };
+                unless ($@) {
+                    return Writer::Clipboard::Win32->new($notifier);
+                }
             }
-            return Writer::Clipboard::Win32->new;
+            my $executable = _findExecutable($command{$^O});
+            if ($executable) {
+                return Writer::Clipboard::Cmd->new($notifier, $executable);
+            }
         }
         print "Platform: $^O is not supported yet. echo received text only.\n";
-        return Writer::Stdout->new;
+        return Writer->new($notifier);
+    }
+    sub _createNotifier {
+        if ($^O =~ /^(MSWin32|cygwin)$/) {
+            eval { require Win32::GUI; };
+            unless ($@) {
+                return Notifier::Win32->new;
+            }
+        }
+        my $executable;
+        if ($^O =~ /^(darwin)$/) {
+            $executable = _findExecutable([`which growlnotify`]);
+            if ($executable) {
+                return Notifier::Cmd->new(
+                    qq{| $executable -a "%s" -t "%s"}
+                );
+            }
+        }
+        if ($^O =~ /^(linux)$/) {
+            $executable = _findExecutable([`which notify-send`]);
+            if ($executable) {
+                return Notifier::Cmd->new(
+                    qq{$executable "%s" "%s"}
+                );
+            }
+            $executable = _findExecutable([`which xmessage`]);
+            if ($executable) {
+                return Notifier::Cmd->new(
+                    qq{$executable -button '' -timeout 1 "%s\n" "%s"}
+                );
+            }
+        }
+        return Notifier->new;
+    }
+    sub _findExecutable {
+        my $cmdlines = shift;
+        for my $cmdline (@$cmdlines) {
+            chomp $cmdline;
+            # check the first field at command line whether or not to be available
+            return $cmdline if -x (split /\s+/, $cmdline)[0];
+        }
     }
 }
 
 package Writer;
+{
+    sub new {
+        my ($class, $notifier) = @_;
+        return bless { notifier => $notifier }, $class;
+    }
+    sub write {
+        my ($self, $text) = @_;
+        print "$text\n";
+    }
+    sub notify {
+        my ($self, $info) = @_;
+        $self->{notifier}->notify($info);
+    }
+}
+
+package Writer::Clipboard::Win32;
+use base qw(Writer);
+{
+    sub new {
+        my ($class, $notifier) = @_;
+        my $self = bless {
+            notifier  => $notifier,
+            clipboard => Win32::Clipboard(),
+        }, $class;
+        $self
+    }
+    sub write {
+        my ($self, $text) = @_;
+        $self->{clipboard}->Set($text);
+    }
+}
+
+package Writer::Clipboard::Cmd;
+use base qw(Writer);
+{
+    sub new {
+        my ($class, $notifier, $cmdline) = @_;
+        my $self = bless {
+            notifier => $notifier,
+            cmdline  => $cmdline,
+        }, $class;
+        $self
+    }
+    sub write {
+        my ($self, $text) = @_;
+        open my $cmd, "| $self->{cmdline}";
+        print $cmd $text;
+        close $cmd;
+    }
+}
+
+package Notifier;
+{
+    sub new {
+        bless {}, shift
+    }
+    sub notify {}
+}
+
+package Notifier::Win32;
+use base qw(Notifier);
+{
+    sub new {
+        bless {}, shift
+    }
+    sub notify {
+        my ($self, $info) = @_;
+        my $ni = Win32::GUI::Window->new->AddNotifyIcon(
+            -balloon       => 1,
+            -balloon_icon  => $info->{icon} || 'none', # none/info/warning/error
+            -balloon_title => $info->{title},
+            -balloon_tip   => $info->{text},
+        );
+        sleep 1; # display interval
+    }
+}
+
+package Notifier::Cmd;
+use base qw(Notifier);
+{
+    sub new {
+        my ($class, $format) = @_;
+        my $self = bless {
+            format  => $format,
+            command => index($format, '|') == 0
+                        ? \&_notify_stdout
+                        : \&_notify_cmd,
+        }, $class;
+        $self
+    }
+    sub notify {
+        my ($self, $info) = @_;
+        &{$self->{command}}($self->{format}, $info);
+    }
+    sub _notify_stdout {
+        my ($format, $info) = @_;
+        open my $cmd, sprintf $format
+            , $info->{icon} || ''
+            , $info->{title};
+        print $cmd $info->{text};
+        close $cmd;
+    }
+    sub _notify_cmd {
+        my ($format, $info) = @_;
+        system sprintf($format, $info->{title}, $info->{text});
+    }
+}
+
+package TextWriter;
 use Encode qw(decode encode);
 use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
 {
@@ -47,138 +193,37 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
             writer   => {},
             encoding => $opts->{encoding},
             verbose  => $opts->{verbose},
+            nlength  => $opts->{nlength} || 40,
         }, $class;
         $self
     }
-    sub write {
+    sub writeText {
         my ($self, $text, $header) = @_;
         return unless $text;
-        my $writer = $self->_get_writer($header->{type});
+
         my $guess = guess_encoding($text);
         my $text_encoding = ref $guess
             ? $guess->name
             : ($guess =~ /([\w-]+)$/o)[0]; # accept first suspects
+        my $raw_text = $text;
+        $text = encode($self->{encoding}, decode($text_encoding, $text));
+
+        my $writer = $self->_get_writer($header->{type});
+        $writer->write($text);
         if ($self->{verbose} ge 2) {
             printf "[%s] encoding: %s -> %s\n"
                 , ref $writer, $text_encoding, $self->{encoding};
-            print "$text\n" if ref $writer ne 'Writer::Stdout';
+            print "$text\n" if ref $writer ne 'Writer';
         }
-        $text = encode($self->{encoding}, decode($text_encoding, $text));
-        $writer->write($text);
+        $writer->notify({
+            title => sprintf('(%s) %s', length($text), ref $writer),
+            text  => substr($raw_text, 0, $self->{nlength}),
+        });
     }
     sub _get_writer {
-        my ($self, $type) = @_;
-        $type = 'clipboard' unless $type;
+        my $self = shift;
+        my $type = shift || 'clipboard';
         $self->{writer}->{$type} ||= WriterFactory->create($type);
-    }
-}
-
-package Writer::Clipboard::Win32;
-{
-    my $notify_ready = 0;
-    my $notify_message_length = 40;
-    my %notify = (
-        title   => __PACKAGE__,
-        icon    => 'none', # none info warning error
-    );
-    sub new {
-        my $class = shift;
-        eval {
-            require Win32::GUI;
-            $notify_ready = 1;
-        };
-        my $self = bless {
-            clipboard => Win32::Clipboard(),
-        }, $class;
-        $self
-    }
-    sub write {
-        my ($self, $text) = @_;
-        $self->{clipboard}->Set($text);
-        if ($notify_ready) {
-            my $ni = Win32::GUI::Window->new->AddNotifyIcon(
-                -balloon       => 1,
-                -balloon_icon  => $notify{icon},
-                -balloon_title => sprintf('(%s) %s', length($text), $notify{title}),
-                -balloon_tip   => substr($text, 0, $notify_message_length),
-            );
-            sleep 1;
-        }
-    }
-}
-
-package Writer::Clipboard::Cmd;
-{
-    sub new {
-        my ($class, $cmdref) = @_;
-        my (@tried_cmd, $cmd, $available) = ();
-        for my $cmdline (@$cmdref) {
-            # check the first field at command line whether or not to be available
-            $cmd = (split /\s+/, $cmdline)[0];
-            if (-x $cmd) {
-                $available = $cmdline;
-                last;
-            }
-            push @tried_cmd, $cmd;
-        }
-        $available or die sprintf "command not found(%s).", join(', ', @tried_cmd);
-        my $self = bless {
-            cmdline => $available,
-        }, $class;
-        $self
-    }
-    sub write {
-        my ($self, $text) = @_;
-        open COPYCMD, "| $self->{cmdline}";
-        print COPYCMD $text;
-        close COPYCMD;
-    }
-}
-
-package Writer::Clipboard::Cmd::Mac;
-use base qw(Writer::Clipboard::Cmd);
-{
-    my $notify_ready = 0;
-    my $notify_message_length = 40;
-    my %notify = (
-        cmd     => '',
-        title   => __PACKAGE__,
-        appicon => '',
-    );
-    sub new {
-        my $class = shift;
-        for (`which growlnotify`) {
-            chomp;
-            if (-x) {
-                $notify{cmd} = $_;
-                $notify_ready = 1;
-                last;
-            }
-        }
-        SUPER::new $class (@_);
-    }
-    sub write {
-        my ($self, $text) = @_;
-        $self->SUPER::write($text);
-        if ($notify_ready) {
-            open my $cmd, sprintf '| %s -a %s -t "(%s) %s"'
-                , $notify{cmd}, $notify{appicon}
-                , length($text), $notify{title};
-            print $cmd substr($text, 0, $notify_message_length);
-            close $cmd;
-        }
-    }
-}
-
-package Writer::Stdout;
-{
-    sub new {
-        my $class = shift;
-        return bless {}, $class;
-    }
-    sub write {
-        my ($self, $text) = @_;
-        print "$text\n";
     }
 }
 
@@ -200,7 +245,7 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
     }
     sub run {
         my $self = shift;
-        my $writer = Writer->new({
+        my $writer = TextWriter->new({
             encoding => $self->{encoding},
             verbose  => $self->{verbose},
         });
@@ -245,7 +290,7 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
                 );
             }
             close $sock;
-            $writer->write($text, \%header);
+            $writer->writeText($text, \%header);
         }
         close $listen_sock;
     }
