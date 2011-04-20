@@ -5,14 +5,18 @@ use warnings;
 
 package WriterFactory;
 {
-    # defines available command line to copy stdin to the clipboard
+    # defines available command to copy into clipboard or to send notification.
     my %command = (
-        # osname      command line
-        darwin   => [ '/usr/bin/pbcopy', ],
-        linux    => [ '/usr/bin/xsel', '/usr/bin/xclip', ],
-        cygwin   => [ '/usr/bin/putclip', ],
-        MSWin32  => [ ($ENV{WINDIR}||='').'\\system32\\clip.exe',
-                      ($ENV{CYGWIN_HOME}||='').'\\usr\\bin\\putclip.exe', ],
+        # osname      type           command-name     command-format
+        darwin   => { clipboard => [ 'pbcopy'      => '', ],
+                      notify    => [ 'growlnotify' => qq{| %CMD% -t "%s"}, ], },
+        linux    => { clipboard => [ 'xsel'        => '',
+                                     'xclip'       => '', ],
+                      notify    => [ 'notify-send' => qq{%CMD% "%s" "%s"},
+                                     'xmessage'    => qq{%CMD% -button '' -timeout 2 "%s\n" "%s"}, ], },
+        cygwin   => { clipboard => [ 'putclip'     => '', ] },
+        MSWin32  => { clipboard => [ 'clip.exe'    => '',
+                                     'putclip.exe' => '', ] },
     );
     sub create {
         my ($self, $type) = @_;
@@ -24,9 +28,8 @@ package WriterFactory;
                     return Writer::Clipboard::Win32->new($notifier);
                 }
             }
-            my $executable = _findExecutable($command{$^O});
-            if ($executable) {
-                return Writer::Clipboard::Cmd->new($notifier, $executable);
+            if (my $cmdline = _find_cmdline($command{$^O}->{clipboard})) {
+                return Writer::Clipboard::Cmd->new($notifier, $cmdline);
             }
         }
         print "Platform: $^O is not supported yet. echo received text only.\n";
@@ -39,38 +42,27 @@ package WriterFactory;
                 return Notifier::Win32->new;
             }
         }
-        my $executable;
-        if ($^O =~ /^(darwin)$/) {
-            $executable = _findExecutable([`which growlnotify`]);
-            if ($executable) {
-                return Notifier::Cmd->new(
-                    qq{| $executable -a "%s" -t "%s"}
-                );
-            }
-        }
-        if ($^O =~ /^(linux)$/) {
-            $executable = _findExecutable([`which notify-send`]);
-            if ($executable) {
-                return Notifier::Cmd->new(
-                    qq{$executable "%s" "%s"}
-                );
-            }
-            $executable = _findExecutable([`which xmessage`]);
-            if ($executable) {
-                return Notifier::Cmd->new(
-                    qq{$executable -button '' -timeout 1 "%s\n" "%s"}
-                );
-            }
+        if (my $cmdline = _find_cmdline($command{$^O}->{notify})) {
+            return Notifier::Cmd->new($cmdline);
         }
         return Notifier->new;
     }
-    sub _findExecutable {
-        my $cmdlines = shift;
-        for my $cmdline (@$cmdlines) {
-            chomp $cmdline;
-            # check the first field at command line whether or not to be available
-            return $cmdline if -x (split /\s+/, $cmdline)[0];
+    sub _find_cmdline {
+        my @commands = @{ shift; };
+        for (my $i = 0; $i < @commands; $i += 2) {
+            my ($cmd, $format) = @commands[$i, $i + 1];
+            if (my $path = _find_executable($cmd)) {
+                $format =~ s/%CMD%|^$/$path/;
+                return $format;
+            }
         }
+    }
+    sub _find_executable {
+       my $cmd_name = shift;
+       for my $dir (split /[:;]/, $ENV{PATH}) {
+            my $path = "$dir/$cmd_name";
+            return $path if -x $path;
+       }
     }
 }
 
@@ -144,9 +136,8 @@ use base qw(Notifier);
         my ($self, $info) = @_;
         my $ni = Win32::GUI::Window->new->AddNotifyIcon(
             -balloon       => 1,
-            -balloon_icon  => $info->{icon} || 'none', # none/info/warning/error
             -balloon_title => $info->{title},
-            -balloon_tip   => $info->{text},
+            -balloon_tip   => $info->{enc_text},
         );
         sleep 1; # display interval
     }
@@ -160,24 +151,22 @@ use base qw(Notifier);
         my $self = bless {
             format  => $format,
             command => index($format, '|') == 0
-                        ? \&_notify_stdout
-                        : \&_notify_cmd,
+                        ? \&_using_stdin
+                        : \&_using_param,
         }, $class;
         $self
     }
     sub notify {
         my ($self, $info) = @_;
-        &{$self->{command}}($self->{format}, $info);
+        $self->{command}->($self->{format}, $info);
     }
-    sub _notify_stdout {
+    sub _using_stdin {
         my ($format, $info) = @_;
-        open my $cmd, sprintf $format
-            , $info->{icon} || ''
-            , $info->{title};
+        open my $cmd, sprintf($format, $info->{title});
         print $cmd $info->{text};
         close $cmd;
     }
-    sub _notify_cmd {
+    sub _using_param {
         my ($format, $info) = @_;
         system sprintf($format, $info->{title}, $info->{text});
     }
@@ -189,11 +178,17 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
 {
     sub new {
         my ($class, $opts) = @_;
+        # suspect terminal encoding from LANG variable.
+        my $termenc = $ENV{LANG};
+        if ($termenc) {
+            $termenc = lc(substr($termenc, index($termenc, '.') + 1));
+        }
         my $self = bless {
             writer   => {},
             encoding => $opts->{encoding},
             verbose  => $opts->{verbose},
             nlength  => $opts->{nlength} || 40,
+            termenc  => $termenc || 'utf8',
         }, $class;
         $self
     }
@@ -205,19 +200,20 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
         my $text_encoding = ref $guess
             ? $guess->name
             : ($guess =~ /([\w-]+)$/o)[0]; # accept first suspects
-        my $raw_text = $text;
-        $text = encode($self->{encoding}, decode($text_encoding, $text));
+        my $enc_text = encode($self->{encoding}, decode($text_encoding, $text));
 
         my $writer = $self->_get_writer($header->{type});
-        $writer->write($text);
+        $writer->write($enc_text);
         if ($self->{verbose} ge 2) {
             printf "[%s] encoding: %s -> %s\n"
                 , ref $writer, $text_encoding, $self->{encoding};
-            print "$text\n" if ref $writer ne 'Writer';
+            print encode($self->{termenc}, decode($text_encoding, "$text\n"))
+                if ref $writer ne 'Writer';
         }
         $writer->notify({
-            title => sprintf('(%s) %s', length($text), ref $writer),
-            text  => substr($raw_text, 0, $self->{nlength}),
+            title    => sprintf('(%s) %s', length($enc_text), ref $writer),
+            text     => substr($text, 0, $self->{nlength}),
+            enc_text => substr($enc_text, 0, $self->{nlength}), # for Win32
         });
     }
     sub _get_writer {
