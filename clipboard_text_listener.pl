@@ -70,6 +70,38 @@ use File::Spec;
     }
 }
 
+package Command;
+{
+    sub new {
+        my ($class, $format) = @_;
+        my $self = bless {
+            format  => $format,
+            command => index($format, '|') == 0
+                        ? \&_using_stdin
+                        : \&_using_param,
+        }, $class;
+        $self
+    }
+    sub execute {
+        my ($self, $param) = @_;
+        $self->{command}->($self->{format}, $param);
+    }
+    sub _using_stdin {
+        my ($format, $param) = @_;
+        return unless $param;
+        my @param = @$param;
+        my $stdin = pop @param;
+        open my $cmd, sprintf($format, @param);
+        print $cmd $stdin;
+        close $cmd;
+    }
+    sub _using_param {
+        my ($format, $param) = @_;
+        return unless $param;
+        system sprintf($format, @$param);
+    }
+}
+
 package Writer;
 {
     sub new {
@@ -110,15 +142,13 @@ use base qw(Writer);
         my ($class, $notifier, $cmdline) = @_;
         my $self = bless {
             notifier => $notifier,
-            cmdline  => $cmdline,
+            command  => Command->new($cmdline),
         }, $class;
         $self
     }
     sub write {
         my ($self, $text) = @_;
-        open my $cmd, "| $self->{cmdline}";
-        print $cmd $text;
-        close $cmd;
+        $self->{command}->execute([$text]);
     }
 }
 
@@ -154,25 +184,13 @@ use base qw(Notifier);
         my ($class, $format) = @_;
         my $self = bless {
             format  => $format,
-            command => index($format, '|') == 0
-                        ? \&_using_stdin
-                        : \&_using_param,
+            command => Command->new($format),
         }, $class;
         $self
     }
     sub notify {
         my ($self, $info) = @_;
-        $self->{command}->($self->{format}, $info);
-    }
-    sub _using_stdin {
-        my ($format, $info) = @_;
-        open my $cmd, sprintf($format, $info->{title});
-        print $cmd $info->{text};
-        close $cmd;
-    }
-    sub _using_param {
-        my ($format, $info) = @_;
-        system sprintf($format, $info->{title}, $info->{text});
+        $self->{command}->execute([$info->{title}, $info->{text}]);
     }
 }
 
