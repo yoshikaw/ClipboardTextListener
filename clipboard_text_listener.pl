@@ -4,19 +4,22 @@ use strict;
 use warnings;
 
 package WriterFactory;
+use File::Spec;
 {
     # defines available command to copy into clipboard or to send notification.
     my %command = (
-        # osname      type           command-name     command-format
+        # osname      type           command-name     command-format (default = '| %CMD')
         darwin   => { clipboard => [ 'pbcopy'      => '', ],
                       notify    => [ 'growlnotify' => qq{| %CMD% -t "%s"}, ], },
         linux    => { clipboard => [ 'xsel'        => '',
                                      'xclip'       => '', ],
                       notify    => [ 'notify-send' => qq{%CMD% "%s" "%s"},
                                      'xmessage'    => qq{%CMD% -button '' -timeout 2 "%s\n" "%s"}, ], },
-        cygwin   => { clipboard => [ 'putclip'     => '', ] },
+        cygwin   => { clipboard => [ 'putclip'     => '', ], },
         MSWin32  => { clipboard => [ 'clip.exe'    => '',
-                                     'putclip.exe' => '', ] },
+                                     'putclip.exe' => '',
+                                     ($ENV{CYGWIN_HOME}||'').'\\bin\\putclip.exe'         => '',
+                                     ($ENV{SystemDrive}||'').'\\cygwin\\bin\\putclip.exe' => '', ], },
     );
     sub create {
         my ($self, $type) = @_;
@@ -28,7 +31,7 @@ package WriterFactory;
                     return Writer::Clipboard::Win32->new($notifier);
                 }
             }
-            if (my $cmdline = _find_cmdline($command{$^O}->{clipboard})) {
+            if (my $cmdline = _get_cmdline($command{$^O}->{clipboard})) {
                 return Writer::Clipboard::Cmd->new($notifier, $cmdline);
             }
         }
@@ -42,25 +45,26 @@ package WriterFactory;
                 return Notifier::Win32->new;
             }
         }
-        if (my $cmdline = _find_cmdline($command{$^O}->{notify})) {
+        if (my $cmdline = _get_cmdline($command{$^O}->{notify})) {
             return Notifier::Cmd->new($cmdline);
         }
         return Notifier->new;
     }
-    sub _find_cmdline {
-        my @commands = @{ shift; };
+    sub _get_cmdline {
+        my @commands = @{ shift || return; };
         for (my $i = 0; $i < @commands; $i += 2) {
-            my ($cmd, $format) = @commands[$i, $i + 1];
-            if (my $path = _find_executable($cmd)) {
-                $format =~ s/%CMD%|^$/$path/;
-                return $format;
+            my $cmdname = $commands[$i];
+            my $cmdline = $commands[$i + 1] || '| %CMD%';
+            if (my $path = _find_executable($cmdname)) {
+                $cmdline =~ s/%CMD%|^$/$path/;
+                return $cmdline;
             }
         }
     }
     sub _find_executable {
        my $cmd_name = shift;
-       for my $dir (split /[:;]/, $ENV{PATH}) {
-            my $path = "$dir/$cmd_name";
+       for my $dir (File::Spec->path) {
+            my $path = File::Spec->canonpath("$dir/$cmd_name");
             return $path if -x $path;
        }
     }
