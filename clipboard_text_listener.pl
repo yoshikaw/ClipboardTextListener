@@ -23,22 +23,22 @@ use File::Spec;
     );
     sub create {
         my ($self, $type) = @_;
-        my $notifier = _createNotifier();
         if ($type eq 'clipboard') {
             if ($^O =~ /^(MSWin32|cygwin)$/) {
                 eval { require Win32::Clipboard; };
                 unless ($@) {
-                    return Writer::Clipboard::Win32->new($notifier);
+                    return Writer::Clipboard::Win32->new;
                 }
             }
             if (my $cmdline = _get_cmdline($command{$^O}->{clipboard})) {
-                return Writer::Clipboard::Cmd->new($notifier, $cmdline);
+                return Writer::Clipboard::Cmd->new($cmdline);
             }
         }
         print "Platform: $^O is not supported yet. echo received text only.\n";
-        return Writer->new($notifier);
+        return Writer->new;
     }
-    sub _createNotifier {
+    sub createNotifier {
+        my ($self, $type) = @_;
         if ($^O =~ /^(MSWin32|cygwin)$/) {
             eval { require Win32::GUI; };
             unless ($@) {
@@ -105,16 +105,12 @@ package Command;
 package Writer;
 {
     sub new {
-        my ($class, $notifier) = @_;
-        return bless { notifier => $notifier }, $class;
+        my ($class) = @_;
+        return bless {}, $class;
     }
     sub write {
         my ($self, $text) = @_;
         print "$text\n";
-    }
-    sub notify {
-        my ($self, $info) = @_;
-        $self->{notifier}->notify($info);
     }
 }
 
@@ -122,9 +118,8 @@ package Writer::Clipboard::Win32;
 use base qw(Writer);
 {
     sub new {
-        my ($class, $notifier) = @_;
+        my ($class) = @_;
         my $self = bless {
-            notifier  => $notifier,
             clipboard => Win32::Clipboard(),
         }, $class;
         $self
@@ -139,9 +134,8 @@ package Writer::Clipboard::Cmd;
 use base qw(Writer);
 {
     sub new {
-        my ($class, $notifier, $cmdline) = @_;
+        my ($class, $cmdline) = @_;
         my $self = bless {
-            notifier => $notifier,
             command  => Command->new($cmdline),
         }, $class;
         $self
@@ -202,6 +196,7 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
         my ($class, $opts) = @_;
         my $self = bless {
             writer   => {},
+            notifier => WriterFactory->createNotifier(),
             encoding => $opts->{encoding},
             verbose  => $opts->{verbose},
             nlength  => $opts->{nlength} || 40,
@@ -227,7 +222,7 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
             print encode($self->{termenc}, decode($text_encoding, "$text\n"))
                 if ref $writer ne 'Writer';
         }
-        $writer->notify({
+        $self->{notifier}->notify({
             title    => sprintf('(%s) %s', length($enc_text), ref $writer),
             text     => substr($text, 0, $self->{nlength}),
             enc_text => substr($enc_text, 0, $self->{nlength}), # for Win32
