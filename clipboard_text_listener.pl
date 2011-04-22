@@ -195,22 +195,17 @@ use base qw(Notifier);
 }
 
 package TextWriter;
-use Encode qw(decode encode);
+use Encode qw(decode encode find_encoding);
 use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
 {
     sub new {
         my ($class, $opts) = @_;
-        # suspect terminal encoding from LANG variable.
-        my $termenc = $ENV{LANG};
-        if ($termenc) {
-            $termenc = lc(substr($termenc, index($termenc, '.') + 1));
-        }
         my $self = bless {
             writer   => {},
             encoding => $opts->{encoding},
             verbose  => $opts->{verbose},
             nlength  => $opts->{nlength} || 40,
-            termenc  => $termenc || 'utf8',
+            termenc  => _get_terminal_encoding() || 'utf8',
         }, $class;
         $self
     }
@@ -242,6 +237,17 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
         my $self = shift;
         my $type = shift || 'clipboard';
         $self->{writer}->{$type} ||= WriterFactory->create($type);
+    }
+    sub _get_terminal_encoding {
+        # suspect terminal encoding from LANG variable.
+        my $termenc = $ENV{LANG} || '';
+        if ($^O eq 'MSWin32') {
+            $termenc = "cp$1" if `chcp` =~ /: (\d+)/;
+        }
+        else {
+            $termenc = lc(substr($termenc, index($termenc, '.') + 1));
+        }
+        return find_encoding($termenc);
     }
 }
 
