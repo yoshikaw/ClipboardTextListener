@@ -208,7 +208,7 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
         my ($self, $data, $header) = @_;
         return unless $data;
 
-        my @data = @$data;
+        my @data = @$data or return;
         my $text = join '', @data;
 
         my $guess = guess_encoding($text);
@@ -313,7 +313,7 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
                 );
             }
             close $sock;
-            $writer->writeText(\@data, \%header);
+            $writer->writeText(\@data, \%header) if $accepted;
         }
         close $listen_sock;
     }
