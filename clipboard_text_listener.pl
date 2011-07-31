@@ -17,9 +17,7 @@ use File::Spec;
                                      'xmessage'    => qq{%CMD% -button '' -timeout 2 "%s\n" "%s"}, ], },
         cygwin   => { clipboard => [ 'putclip'     => '', ], },
         MSWin32  => { clipboard => [ 'clip.exe'    => '',
-                                     'putclip.exe' => '',
-                                     ($ENV{CYGWIN_HOME}||'').'\\bin\\putclip.exe'         => '',
-                                     ($ENV{SystemDrive}||'').'\\cygwin\\bin\\putclip.exe' => '', ], },
+                                     'putclip.exe' => '', ], },
     );
     sub create {
         my ($self, $type) = @_;
