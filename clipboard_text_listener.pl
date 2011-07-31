@@ -203,8 +203,11 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
         $self
     }
     sub writeText {
-        my ($self, $text, $header) = @_;
-        return unless $text;
+        my ($self, $data, $header) = @_;
+        return unless $data;
+
+        my @data = @$data or return;
+        my $text = join '', @data;
 
         my $guess = guess_encoding($text);
         my $text_encoding = ref $guess
@@ -221,7 +224,7 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
                 if ref $writer ne 'Writer';
         }
         $self->{notifier}->notify({
-            title    => sprintf('(%s) %s', length($enc_text), ref $writer),
+            title    => sprintf('(%d/%d) %s', length($text), scalar @data, ref $writer),
             text     => substr($text, 0, $self->{nlength}),
             enc_text => substr($enc_text, 0, $self->{nlength}), # for Win32
         });
@@ -280,13 +283,13 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
                              , $self->{_args} ? "($self->{_args})" : ""
         );
 
-        my ($sock, $accepted, @data, %header);
-        while ($sock = $listen_sock->accept) {
-            select $sock; $|=1; select STDOUT;
-            @data = (); $accepted = 0;
+        while (my $sock = $listen_sock->accept) {
+            my ($accepted, @data, %header, $data_length);
+            select $sock; $| = 1; select STDOUT;
             while (<$sock>) {
                 if ($accepted) {
                     push @data, $_;
+                    $data_length += length;
                 }
                 else {
                     my @header = split /\t/;
@@ -296,18 +299,19 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
                     $accepted = 1;
                 }
             }
-            my $text = join '', @data;
             if ($self->{verbose}) {
                 my ($src_port, $src_iaddr) = unpack_sockaddr_in($sock->peername);
                 $self->_stdout(
                     sprintf '(%s:%s) %s'
                           , inet_ntoa($src_iaddr), $src_port
-                          , $accepted ? '*** RECEIVE TEXT *** ' . length($text) # roughly
+                          , $accepted ? sprintf('%s (%d/%d)'
+                                              , '*** RECEIVE DATA ***'
+                                              , $data_length, scalar(@data))
                                       : '*** NOT ACCEPTED ***'
                 );
             }
             close $sock;
-            $writer->writeText($text, \%header);
+            $writer->writeText(\@data, \%header) if $accepted;
         }
         close $listen_sock;
     }
