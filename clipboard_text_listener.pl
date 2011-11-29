@@ -199,6 +199,7 @@ use Encode::Guess qw(euc-jp shiftjis 7bit-jis);
             verbose  => $opts->{verbose},
             nlength  => $opts->{nlength} || 40,
             termenc  => _get_terminal_encoding() || 'utf8',
+            rtrim    => $opts->{rtrim} || 0,
         }, $class;
         $self
     }
@@ -259,6 +260,7 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
             encoding    => $args{-encoding} ||= 'shiftjis',
             verbose     => $args{-verbose}  ||= 0,
             accept_key  => $args{-key}      ||= 'change_on_install',
+            rtrim       => $args{-rtrim}    ||= 0,
             _args       => @_ ? join(' ', @_) : '',
         };
         return bless $self, $class;
@@ -284,10 +286,11 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
         );
 
         while (my $sock = $listen_sock->accept) {
-            my ($accepted, @data, %header, $data_length);
+            my ($accepted, @data, %header, $data_length, $truncate_line);
             select $sock; $| = 1; select STDOUT;
             while (<$sock>) {
                 if ($accepted) {
+                    s/\x20+$//o if $truncate_line;
                     push @data, $_;
                     $data_length += length;
                 }
@@ -296,6 +299,8 @@ use IO::Socket qw(inet_ntoa unpack_sockaddr_in);
                     my $received_key = shift @header;
                     last unless $received_key =~ /^\Q$self->{accept_key}\E$/o;
                     %header = map { split /=/ } @header;
+                    $truncate_line = ($self->{rtrim} == 1
+                                  or (defined $header{rtrim} && $header{rtrim} == 1));
                     $accepted = 1;
                 }
             }
