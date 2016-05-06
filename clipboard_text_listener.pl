@@ -16,6 +16,7 @@ use File::Spec;
                       notify    => [ 'notify-send' => qq{%CMD% "%s" "%s"},
                                      'xmessage'    => qq{%CMD% -button '' -timeout 2 "%s\n" "%s"}, ], },
         cygwin   => { clipboard => [ 'putclip'     => '', ], },
+        msys     => { clipboard => [ 'clip.exe'     => '', ], },
         MSWin32  => { clipboard => [ 'clip.exe'    => '',
                                      'putclip.exe' => '', ], },
     );
