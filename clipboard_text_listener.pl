@@ -12,6 +12,7 @@ use File::Spec;
         darwin   => { clipboard => [ 'pbcopy'      => '', ],
                       notify    => [ 'growlnotify' => qq{| %CMD% -t "%s"}, ], },
         linux    => { clipboard => [ 'xsel'        => '',
+                                     'clip.exe'    => '', # WSL
                                      'xclip'       => '', ],
                       notify    => [ 'notify-send' => qq{%CMD% "%s" "%s"},
                                      'xmessage'    => qq{%CMD% -button '' -timeout 2 "%s\n" "%s"}, ], },
